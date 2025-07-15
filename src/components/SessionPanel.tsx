@@ -8,7 +8,9 @@ import { Input } from "@/components/ui/input";
 import { GlowingEffect } from "@/components/ui/glowing-effect";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabaseClient';
+import { createSession, updateSession, deleteSession } from '@/lib/api';
+import { createEvent } from '@/lib/api';
+import { sendCommand } from '@/lib/socket';
 
 interface Session {
   id: string;
@@ -29,44 +31,51 @@ export const SessionPanel = ({ sessions, selectedSession, onSessionSelect }: Ses
   const [showNewModal, setShowNewModal] = useState(false);
   const [newSession, setNewSession] = useState({ name: '', type: 'claude' });
   const queryClient = useQueryClient();
+  const [agentLoading, setAgentLoading] = useState<string | null>(null);
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const [agentSuccess, setAgentSuccess] = useState<string | null>(null);
 
-  const addSession = async (sessionData: { name: string; type: string }) => {
-    // Default status is 'running', lastActivity is now
-    const { data, error } = await supabase
-      .from('sessions')
-      .insert([{ 
-        name: sessionData.name, 
-        type: sessionData.type, 
-        status: 'running',
-        last_activity: new Date().toISOString()
-      }]);
-    if (error) throw error;
-    return data;
-  };
-
-  const mutation = useMutation({
-    mutationFn: addSession,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
-      setShowNewModal(false);
-      setNewSession({ name: '', type: 'claude' });
-    },
+  const createMutation = useMutation({
+    mutationFn: createSession,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sessions'] }),
   });
 
-  const deleteSession = async (id: string) => {
-    const { error } = await supabase
-      .from('sessions')
-      .delete()
-      .eq('id', id);
-    if (error) throw error;
-  };
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }) => updateSession(id, data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sessions'] }),
+  });
 
   const deleteMutation = useMutation({
     mutationFn: deleteSession,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sessions'] }),
   });
+
+  const createEventMutation = useMutation({
+    mutationFn: createEvent,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['events'] }),
+  });
+
+  const startAgent = async (sessionId: string) => {
+    setAgentLoading(sessionId);
+    setAgentError(null);
+    setAgentSuccess(null);
+    try {
+      // Use the backend server's IP address for the API call
+      const res = await fetch(`http://192.168.4.22:3000/api/agents/${sessionId}/start`, { method: 'POST' });
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = { error: 'Empty or invalid response from server' };
+      }
+      if (!res.ok) throw new Error(data.error || 'Failed to start agent');
+      setAgentSuccess('Agent started!');
+    } catch (e: any) {
+      setAgentError(e.message);
+    } finally {
+      setAgentLoading(null);
+    }
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -159,6 +168,15 @@ export const SessionPanel = ({ sessions, selectedSession, onSessionSelect }: Ses
                 >
                   <Trash2 className="h-3 w-3" />
                 </Button>
+                <button
+                  onClick={() => startAgent(session.id)}
+                  disabled={agentLoading === session.id}
+                  style={{ marginLeft: 8 }}
+                >
+                  {agentLoading === session.id ? 'Starting...' : 'Start Agent'}
+                </button>
+                {agentError && <div style={{ color: 'red' }}>{agentError}</div>}
+                {agentSuccess && <div style={{ color: 'green' }}>{agentSuccess}</div>}
               </div>
             </div>
           ))}
@@ -179,22 +197,28 @@ export const SessionPanel = ({ sessions, selectedSession, onSessionSelect }: Ses
                 onChange={(e) => setCommand(e.target.value)}
                 className="bg-black border-gray-600 text-green-400 font-mono"
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    console.log('Sending command:', command);
+                  if (e.key === 'Enter' && command.trim()) {
+                    sendCommand(selectedSession, command);
                     setCommand('');
                   }
                 }}
               />
               <Button 
                 onClick={() => {
-                  console.log('Sending command:', command);
-                  setCommand('');
+                  if (selectedSession && command.trim()) {
+                    sendCommand(selectedSession, command);
+                    setCommand("");
+                  }
                 }}
                 className="bg-green-600 hover:bg-green-700"
+                disabled={createEventMutation.isPending}
               >
                 Send
               </Button>
             </div>
+            {createEventMutation.isError && (
+              <div className="text-red-500 text-sm mt-2">Error: {(createEventMutation.error as any)?.message || 'Failed to send command.'}</div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -225,17 +249,17 @@ export const SessionPanel = ({ sessions, selectedSession, onSessionSelect }: Ses
           <DialogFooter>
             <Button
               className="bg-green-600 hover:bg-green-700"
-              onClick={() => mutation.mutate(newSession)}
-              disabled={mutation.isPending || !newSession.name}
+              onClick={() => createMutation.mutate(newSession)}
+              disabled={createMutation.isPending || !newSession.name}
             >
-              {mutation.isPending ? 'Creating...' : 'Create'}
+              {createMutation.isPending ? 'Creating...' : 'Create'}
             </Button>
             <Button variant="outline" onClick={() => setShowNewModal(false)}>
               Cancel
             </Button>
           </DialogFooter>
-          {mutation.isError && (
-            <div className="text-red-500 text-sm mt-2">Error: {(mutation.error as any)?.message || 'Failed to create session.'}</div>
+          {createMutation.isError && (
+            <div className="text-red-500 text-sm mt-2">Error: {(createMutation.error as any)?.message || 'Failed to create session.'}</div>
           )}
         </DialogContent>
       </Dialog>

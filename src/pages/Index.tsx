@@ -11,27 +11,7 @@ import { VoiceCommand } from "@/components/VoiceCommand";
 import { FilterPanel } from "@/components/FilterPanel";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabaseClient';
-
-// Fetch sessions from Supabase
-const fetchSessions = async () => {
-  const { data, error } = await supabase
-    .from('sessions')
-    .select('*')
-    .order('last_activity', { ascending: false });
-  if (error) throw error;
-  return data;
-};
-
-// Fetch events from Supabase
-const fetchEvents = async () => {
-  const { data, error } = await supabase
-    .from('events')
-    .select('*')
-    .order('timestamp', { ascending: false });
-  if (error) throw error;
-  return data;
-};
+import { getSessions, getEvents } from '@/lib/api';
 
 const Index = () => {
   const [isVoiceActive, setIsVoiceActive] = useState(false);
@@ -43,11 +23,11 @@ const Index = () => {
   // Replace mock useState with useQuery
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery({
     queryKey: ['sessions'],
-    queryFn: fetchSessions,
+    queryFn: getSessions,
   });
   const { data: events = [], isLoading: eventsLoading } = useQuery({
     queryKey: ['events'],
-    queryFn: fetchEvents,
+    queryFn: getEvents,
   });
 
   return (
@@ -114,7 +94,6 @@ const Index = () => {
           {/* Event Stream */}
           <div className="lg:col-span-2">
             <EventStream 
-              events={events}
               searchQuery={searchQuery}
               selectedSession={selectedSession}
             />
